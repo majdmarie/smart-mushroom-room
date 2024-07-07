@@ -1,0 +1,19 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "rooms": {
+      "$room_id": {
+        "stage": {
+          ".validate": "newData.isString() && (newData.val() === 'incubation' || newData.val() === 'fruiting')"
+        },
+        "stageStartTime": {
+          ".validate": "newData.isNumber()"
+        },
+        "mode": {
+          ".validate": "newData.isString() && (newData.val() === 'manual' || newData.val() === 'automatic')"
+        }
+      }
+    }
+  }
+}
