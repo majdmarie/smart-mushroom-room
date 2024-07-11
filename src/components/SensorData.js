@@ -272,13 +272,13 @@ const SensorData = ({ roomId }) => {
       if (temperature < 24) warnings.push(<Alert severity="error" key="temp-low-inc">{isAutomatic ? "Temperature is too low. Please make sure the actuators are working properly." : "Temperature is too low. Turn on heating or switch to automatic mode."}</Alert>);
       if (humidity > 100) warnings.push(<Alert severity="error" key="humid-high-inc">{isAutomatic ? "Humidity is too high. Please make sure the actuators are working properly." : "Humidity is too high. Turn off humidifier or switch to automatic mode."}</Alert>);
       if (humidity < 95) warnings.push(<Alert severity="error" key="humid-low-inc">{isAutomatic ? "Humidity is too low. Please make sure the actuators are working properly." : "Humidity is too low. Turn on humidifier or switch to automatic mode."}</Alert>);
-      if (mq_value > 800) warnings.push(<Alert severity="error" key="co2-high-inc">{isAutomatic ? "CO2 is too high. Please make sure the actuators are working properly." : "CO2 is too high. Turn on fan or switch to automatic mode."}</Alert>);
+      if (mq_value > 1500) warnings.push(<Alert severity="error" key="co2-high-inc">{isAutomatic ? "CO2 is too high. Please make sure the actuators are working properly." : "CO2 is too high. Turn on fan or switch to automatic mode."}</Alert>);
     } else if (stage === 'fruiting') {
       if (temperature > 20) warnings.push(<Alert severity="error" key="temp-high-fruit">{isAutomatic ? "Temperature is too high. Please make sure the actuators are working properly." : "Temperature is too high. Turn on cooling or switch to automatic mode."}</Alert>);
       if (temperature < 18) warnings.push(<Alert severity="error" key="temp-low-fruit">{isAutomatic ? "Temperature is too low. Please make sure the actuators are working properly." : "Temperature is too low. Turn on heating or switch to automatic mode."}</Alert>);
       if (humidity > 90) warnings.push(<Alert severity="error" key="humid-high-fruit">{isAutomatic ? "Humidity is too high. Please make sure the actuators are working properly." : "Humidity is too high. Turn off humidifier or switch to automatic mode."}</Alert>);
       if (humidity < 85) warnings.push(<Alert severity="error" key="humid-low-fruit">{isAutomatic ? "Humidity is too low. Please make sure the actuators are working properly." : "Humidity is too low. Turn on humidifier or switch to automatic mode."}</Alert>);
-      if (mq_value > 800) warnings.push(<Alert severity="error" key="co2-high-fruit">{isAutomatic ? "CO2 is too high. Please make sure the actuators are working properly." : "CO2 is too high. Turn on fan or switch to automatic mode."}</Alert>);
+      if (mq_value > 1500) warnings.push(<Alert severity="error" key="co2-high-fruit">{isAutomatic ? "CO2 is too high. Please make sure the actuators are working properly." : "CO2 is too high. Turn on fan or switch to automatic mode."}</Alert>);
     }
 
     return warnings.length > 0 ? warnings : null;

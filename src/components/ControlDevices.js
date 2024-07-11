@@ -1,4 +1,3 @@
-// src/components/ControlDevices.js
 import React, { useEffect, useState } from 'react';
 import { database, ref, get, set, onValue, off, push } from '../firebase';
 import Typography from '@mui/material/Typography';
@@ -16,12 +15,12 @@ const ControlDevices = ({ roomId }) => {
 
   const [airConditionState, setAirConditionState] = useState('on');
   const [coolingState, setCoolingState] = useState('off');
+  const [rotatingState, setRotatingState] = useState('off');
   const [coolingPower, setCoolingPower] = useState('P3');
   const [heatingPower, setHeatingPower] = useState('H2');
   const [airConditionTemperature, setAirConditionTemperature] = useState(25);
-  
-  const coolingPowers = ['P3', 'P2', 'P1'];
 
+  const coolingPowers = ['P3', 'P2', 'P1'];
 
   useEffect(() => {
     const actuatorsRef = ref(database, `/rooms/${roomId}/actuators`);
@@ -51,39 +50,32 @@ const ControlDevices = ({ roomId }) => {
 
   const toggleActuator = (actuator) => {
     if (mode === 'manual') {
-      const updateActuators = (newState) => {
-        set(ref(database, `/rooms/${roomId}/actuators/air_condition`), newState);
-        set(ref(database, `/rooms/${roomId}/actuators/humidity_mister`), newState);
-      };
-  
       if (actuator === 'air_condition_actions') {
         if (airConditionState === 'on') {
           setAirConditionState('off');
           setCoolingState('off');
           setHeatingPower('H2');
           setCoolingPower('P3');
+          setRotatingState('off');
+          queueAirConditionAction('0xFFA05F');
         } else {
           setAirConditionState('on');
           queueAirConditionAction('0xFFA05F');
           queueAirConditionAction('0xFF50AF');
           queueAirConditionAction('0xFF6897');
         }
-        return;
+        actuator = 'air_condition';
       }
-  
+
       const actuatorRef = ref(database, `/rooms/${roomId}/actuators/${actuator}`);
       get(actuatorRef).then((snapshot) => {
         const currentState = snapshot.val();
         const newState = !currentState;
-        if (actuator === 'humidity_mister') {
-          updateActuators(newState);
-        } else {
-          set(actuatorRef, newState);
-        }
+        set(actuatorRef, newState);
       });
     }
   };
-  
+
   const cycleCoolingPower = () => {
     const currentIndex = coolingPowers.indexOf(coolingPower);
     const nextIndex = (currentIndex + 1) % coolingPowers.length;
@@ -92,61 +84,70 @@ const ControlDevices = ({ roomId }) => {
   };
 
   const queueAirConditionAction = (action) => {
+    const queueRef = ref(database, `/rooms/${roomId}/air_condition_actions/actionQueue`);
     if (mode === 'manual') {
       // Cooling
-      if(action === '0xFF50AF'){
-        if(coolingState === 'off'){
+      if (action === '0xFF50AF') {
+        if (coolingState === 'off') {
           setCoolingState('on');
           setCoolingPower(coolingPowers[0]);
           setAirConditionTemperature(25);
           queueAirConditionAction('1xFF48B7');
-        }
-        else{
+        } 
+        else {
           cycleCoolingPower();
         }
+        action = '0xFF50AF';
+        push(queueRef, { action, timestamp: Date.now() });
+        action = '1xFF48B7';
       }
       // Heating
-      else if(action === '0xFF10EF'){
-        if(coolingState === 'on'){
+      else if (action === '0xFF10EF') {
+        if (coolingState === 'on') {
           setCoolingState('off');
           setHeatingPower('H2');
-          setAirConditionTemperature(30);
+          setAirConditionTemperature(45);
           queueAirConditionAction('1xFF48B7');
-        }
-        else{
-          if(heatingPower === 'H2')
+        } 
+        else {
+          if (heatingPower === 'H2') 
             setHeatingPower('H1');
-          else
+          else 
             setHeatingPower('H2');
         }
+        action = '0xFF10EF';
+        push(queueRef, { action, timestamp: Date.now() });
+        action = '1xFF48B7';
       }
       // Increase
-      else if(action === '0xFF48B7'){
-        if(coolingState === 'on' && airConditionTemperature >= 25){
+      else if (action === '0xFF48B7') {
+        if (coolingState === 'on' && airConditionTemperature >= 25) {
           setAirConditionTemperature(16);
-        }
-        else if(coolingState === 'off' && airConditionTemperature >= 45){
+        } else if (coolingState === 'off' && airConditionTemperature >= 45) {
           setAirConditionTemperature(25);
-        }
-        else{
+        } else {
           setAirConditionTemperature(airConditionTemperature + 1);
         }
       }
       // Decrease
-      else if(action === '0xFF08F7'){
-        if(coolingState === 'on' && airConditionTemperature <= 16){
+      else if (action === '0xFF08F7') {
+        if (coolingState === 'on' && airConditionTemperature <= 16) {
           setAirConditionTemperature(25);
-        }
-        else if(coolingState === 'off' && airConditionTemperature <= 25){
+        } else if (coolingState === 'off' && airConditionTemperature <= 25) {
           setAirConditionTemperature(45);
-        }
-        else{
+        } else {
           setAirConditionTemperature(airConditionTemperature - 1);
         }
       }
-      if(action === '1xFF48B7')
-        action = '0xFF48B7';
-      const queueRef = ref(database, `/rooms/${roomId}/air_condition_actions/actionQueue`);
+      else if (action === '0xFF6897') {
+        if (rotatingState === 'on'){
+          setRotatingState('off');
+        }
+        else{
+          setRotatingState('on'); 
+        }
+      }
+      if (action === '1xFF48B7') action = '0xFF48B7';
       push(queueRef, { action, timestamp: Date.now() });
     }
   };
@@ -181,6 +182,8 @@ const ControlDevices = ({ roomId }) => {
             Lamp: {actuatorStates.lamp ? "ON" : "OFF"}
           </Button>
         </Grid>
+        <Grid item xs={12} md={3}>
+        </Grid>
         <Grid item xs={12} md={6}>
           <Button
             variant="contained"
@@ -193,6 +196,8 @@ const ControlDevices = ({ roomId }) => {
           >
             Humidity Mister: {actuatorStates.humidity_mister ? "ON" : "OFF"}
           </Button>
+        </Grid>
+        <Grid item xs={12} md={12}>
         </Grid>
         <Grid item xs={12} md={6}>
           <Button
@@ -253,21 +258,43 @@ const ControlDevices = ({ roomId }) => {
             Air Condition: Cooling {coolingPower}
           </Button>
         </Grid>
+        <Grid item xs={12} md={6}>
+          <Button
+            variant="contained"
+            color={rotatingState === 'on' ? "secondary" : "primary"}
+            onClick={() => queueAirConditionAction('0xFF6897')}
+            fullWidth
+            sx={{ p: 2 }}
+            disabled={mode === 'automatic' || airConditionState === 'off'}
+          >
+            Air Condition: Rotate
+          </Button>
+        </Grid>
         <Grid item xs={12}>
           <Button
             variant="contained"
             onClick={toggleMode}
             fullWidth
-            sx={{ p: 2, bgcolor: 'black', }}
+            sx={{ p: 2, bgcolor: 'black' }}
           >
             Switch to {mode === 'automatic' ? 'Manual' : 'Automatic'} Mode
           </Button>
         </Grid>
       </Grid>
+      <div className="iv-embed" style={{ margin: '0 auto', padding: '0', border: '0', width: '642px' }}>
+        <div className="iv-v" style={{ display: 'block', margin: '0', padding: '1px', border: '0', background: '#000' }}>
+          <iframe className="iv-i" style={{ display: 'block', margin: '0', padding: '0', border: '0' }} src="https://open.ivideon.com/embed/v3/?server=100-j6w9tfJ2n6xWGPekYX4sx3&amp;camera=0&amp;width=&amp;height=&amp;lang=en" width="640" height="360" frameborder="0" allow="autoplay; fullscreen; clipboard-write; picture-in-picture"></iframe>
+        </div>
+        <div className="iv-b" style={{ display: 'block', margin: '0', padding: '0', border: '0' }}>
+          <div style={{ float: 'right', textAlign: 'right', padding: '0 0 10px', lineHeight: '10px' }}>
+            <a className="iv-a" style={{ font: '10px Verdana,sans-serif', color: 'inherit', opacity: '.6' }} href="https://www.ivideon.com/" target="_blank">Powered by Ivideon</a>
+          </div>
+          <div style={{ clear: 'both', height: '0', overflow: 'hidden' }}>&nbsp;</div>
+          <script src="https://open.ivideon.com/embed/v3/embedded.js"></script>
+        </div>
+      </div>
     </Box>
   );
 };
 
 export default ControlDevices;
-
-

@@ -1,8 +1,6 @@
 #include <WiFi.h>
 #include <FirebaseESP32.h>
 #include <DHT.h>
-#include <Wire.h>
-#include <BH1750.h>
 #include <SPIFFS.h>
 #include <IRremoteESP8266.h>
 #include <IRsend.h>
@@ -16,10 +14,9 @@ const char *firebaseHost = "https://mushrrom-4ce90-default-rtdb.europe-west1.fir
 const char *firebaseAuth = "wdsAWQisSGSCGs1wHEg92FK6kWKZjUbhH6pLzNdF";
 
 const char *roomId = "room1";
-String queuePath = queuePath = "/rooms/" + String(roomId) + "/actuators/air_condition/actionQueue";
+String queuePath = "/rooms/" + String(roomId) + "/air_condition_actions/actionQueue";
 
 DHT dht(25, DHT11);
-BH1750 lightMeter;
 IRrecv irrecv(15);
 IRsend irsend(21);
 decode_results results;
@@ -29,9 +26,8 @@ const int mqSensorPin = 34;
 FirebaseData fbdo;
 FirebaseData fbdoSlave;
 String mode = "automatic";
-String stage = "icubation";
+String stage = "incubation";
 
-int airConditionPin = 17;
 int fanPin = 18;
 int lampPin = 5;
 int humidityMisterPin = 19;
@@ -44,20 +40,24 @@ int minHumidity = 100;
 
 int maxMqSensor = 800;
 
+bool airConditionState = false;
+bool fanState = false;
+bool lampState = false;
+bool humidityMisterState = false;
+
 struct SlaveData
 {
   String id;
   float temperature;
   float humidity;
-  float light;
   float mqValue;
 };
 
 const int numSlaves = 2;
-SlaveData slavesData[numSlaves] = {{"slave1", NAN, NAN, NAN, NAN}, {"slave2", NAN, NAN, NAN, NAN}};
+SlaveData slavesData[numSlaves] = {{"slave1", NAN, NAN, NAN}, {"slave2", NAN, NAN, NAN}};
 
 int readingsCount = 0;
-SlaveData cumulativeData[numSlaves] = {{"slave1", 0, 0, 0, 0}, {"slave2", 0, 0, 0, 0}};
+SlaveData cumulativeData[numSlaves] = {{"slave1", 0, 0, 0}, {"slave2", 0, 0, 0}};
 
 void updateFirebase(const char *path, String value)
 {
@@ -108,22 +108,21 @@ void getActuatorStates()
     FirebaseJsonData jsonData;
 
     json.get(jsonData, "air_condition");
-    bool airConditionState = jsonData.boolValue;
-    digitalWrite(airConditionPin, airConditionState ? LOW : HIGH);
+    airConditionState = jsonData.boolValue;
     Serial.println("Air condition " + String(airConditionState ? "ON" : "OFF"));
 
     json.get(jsonData, "fan");
-    bool fanState = jsonData.boolValue;
+    fanState = jsonData.boolValue;
     digitalWrite(fanPin, fanState ? LOW : HIGH);
     Serial.println("Fan " + String(fanState ? "ON" : "OFF"));
 
     json.get(jsonData, "lamp");
-    bool lampState = jsonData.boolValue;
+    lampState = jsonData.boolValue;
     digitalWrite(lampPin, lampState ? LOW : HIGH);
     Serial.println("Lamp " + String(lampState ? "ON" : "OFF"));
 
     json.get(jsonData, "humidity_mister");
-    bool humidityMisterState = jsonData.boolValue;
+    humidityMisterState = jsonData.boolValue;
     digitalWrite(humidityMisterPin, humidityMisterState ? LOW : HIGH);
     Serial.println("Humidity mister " + String(humidityMisterState ? "ON" : "OFF"));
   }
@@ -147,9 +146,6 @@ void getSlaveData(const char *slaveId, SlaveData &slaveData)
     json.get(jsonData, "humidity");
     slaveData.humidity = jsonData.floatValue;
 
-    json.get(jsonData, "light");
-    slaveData.light = jsonData.floatValue;
-
     json.get(jsonData, "mq_value");
     slaveData.mqValue = jsonData.intValue;
 
@@ -168,7 +164,6 @@ void getSlaves()
     getSlaveData(slavesData[i].id.c_str(), slavesData[i]);
     cumulativeData[i].temperature += slavesData[i].temperature;
     cumulativeData[i].humidity += slavesData[i].humidity;
-    cumulativeData[i].light += slavesData[i].light;
     cumulativeData[i].mqValue += slavesData[i].mqValue;
   }
 
@@ -180,18 +175,15 @@ void getSlaves()
     {
       slavesData[i].temperature = cumulativeData[i].temperature / 10;
       slavesData[i].humidity = cumulativeData[i].humidity / 10;
-      slavesData[i].light = cumulativeData[i].light / 10;
       slavesData[i].mqValue = cumulativeData[i].mqValue / 10;
 
       String basePath = "/rooms/" + String(roomId) + "/slaves/" + String(slavesData[i].id);
       updateFirebase((basePath + "/temperature").c_str(), String(slavesData[i].temperature));
       updateFirebase((basePath + "/humidity").c_str(), String(slavesData[i].humidity));
-      updateFirebase((basePath + "/light").c_str(), String(slavesData[i].light));
       updateFirebase((basePath + "/mq_value").c_str(), String(slavesData[i].mqValue));
 
       cumulativeData[i].temperature = 0;
       cumulativeData[i].humidity = 0;
-      cumulativeData[i].light = 0;
       cumulativeData[i].mqValue = 0;
     }
     readingsCount = 0;
@@ -204,8 +196,6 @@ void getSlaves()
     Serial.println(slavesData[i].temperature);
     Serial.print("Humidity: ");
     Serial.println(slavesData[i].humidity);
-    Serial.print("Light: ");
-    Serial.println(slavesData[i].light);
     Serial.print("MQ Sensor: ");
     Serial.println(slavesData[i].mqValue);
   }
@@ -231,22 +221,52 @@ void updateConditions()
   }
 }
 
-void controlActuators(float avgTemperature, float avgHumidity, float avgLight, float avgMqValue)
+void sendAction(const String &action)
+{
+  Serial.print("Action : ");
+  Serial.println(action);
+
+  uint64_t actionValue = strtoull(action.c_str(), nullptr, 16);
+  irsend.sendNEC(actionValue);
+  delay(150);
+  irrecv.resume();
+  delay(150);
+}
+
+void controlActuators(float avgTemperature, float avgHumidity, float avgMqValue)
 {
   if (mode == "manual")
   {
     return;
   }
-
+  String basePath = "/rooms/" + String(roomId) + "/actuators";
   if (avgTemperature > maxTempreature)
   {
-    sendAction("0xFFA05F");
-    Serial.println("Air Condition Off");
+    if (airConditionState == true)
+    {
+      sendAction("0xFF10EF");
+    }
+    else
+    {
+      Firebase.setBool(fbdo, basePath + "/air_condition", true);
+      sendAction("0xFFA05F");
+    }
+    sendAction("0xFF50AF");
+    sendAction("0xFF48B7");
+    sendAction("0xFF48B7");
   }
   else if (avgTemperature < minTempreature)
   {
-    sendAction("0xFFA05F");
-    Serial.println("Air Condition On");
+    if (airConditionState == true)
+    {
+      sendAction("0xFFA05F");
+    }
+    else
+    {
+      Firebase.setBool(fbdo, basePath + "/air_condition", true);
+      sendAction("0xFFA05F");
+    }
+    sendAction("0xFF10EF");
   }
   if (avgHumidity < minHumidity)
   {
@@ -271,11 +291,10 @@ void controlActuators(float avgTemperature, float avgHumidity, float avgLight, f
   }
 }
 
-void readSensors(float &temperature, float &humidity, float &lux, int &mqValue)
+void readSensors(float &temperature, float &humidity, int &mqValue)
 {
   temperature = dht.readTemperature();
   humidity = dht.readHumidity();
-  lux = lightMeter.readLightLevel();
   mqValue = analogRead(mqSensorPin);
 
   if (isnan(temperature) || isnan(humidity))
@@ -284,41 +303,36 @@ void readSensors(float &temperature, float &humidity, float &lux, int &mqValue)
     return;
   }
 
-  Serial.printf("Temperature: %.2f\nHumidity: %.2f\nLight: %.2f\nMQ Sensor: %d\n", temperature, humidity, lux, mqValue);
+  Serial.printf("Temperature: %.2f\nHumidity: %.2f\nMQ Sensor: %d\n", temperature, humidity, mqValue);
 
   String basePath = "/rooms/" + String(roomId) + "/master";
   updateFirebase((basePath + "/temperature").c_str(), String(temperature));
   updateFirebase((basePath + "/humidity").c_str(), String(humidity));
-  updateFirebase((basePath + "/light").c_str(), String(lux));
   updateFirebase((basePath + "/mq_value").c_str(), String(mqValue));
 }
 
-void calculateAverages(float &avgTemperature, float &avgHumidity, float &avgLight, float &avgMqValue)
+void calculateAverages(float &avgTemperature, float &avgHumidity, float &avgMqValue)
 {
   float totalTemperature = 0;
   float totalHumidity = 0;
-  float totalLight = 0;
   float totalMqValue = 0;
 
   for (int i = 0; i < numSlaves; ++i)
   {
     totalTemperature += slavesData[i].temperature;
     totalHumidity += slavesData[i].humidity;
-    totalLight += slavesData[i].light;
     totalMqValue += slavesData[i].mqValue;
   }
 
   totalTemperature += dht.readTemperature();
   totalHumidity += dht.readHumidity();
-  totalLight += lightMeter.readLightLevel();
   totalMqValue += analogRead(mqSensorPin);
 
   avgTemperature = totalTemperature / (numSlaves + 1);
   avgHumidity = totalHumidity / (numSlaves + 1);
-  avgLight = totalLight / (numSlaves + 1);
   avgMqValue = totalMqValue / (numSlaves + 1);
 
-  Serial.printf("Average Temperature: %.2f\nAverage Humidity: %.2f\nAverage Light: %.2f\nAverage MQ Sensor: %.2f\n", avgTemperature, avgHumidity, avgLight, avgMqValue);
+  Serial.printf("Average Temperature: %.2f\nAverage Humidity: %.2f\nAverage MQ Sensor: %.2f\n", avgTemperature, avgHumidity, avgMqValue);
 }
 
 void updateStage()
@@ -359,45 +373,6 @@ void testIR()
   irsend.sendNEC(0xFF6897);
   delay(170);
 }
-
-void sendAction(String action)
-{
-  irsend.sendNEC(strtol(action.c_str(), NULL, 16));
-  delay(150);
-
-  if (irrecv.decode(&results))
-  {
-    if (results.value == strtol(action.c_str(), NULL, 16))
-    {
-      FirebaseJson removeQueueElement;
-      removeQueueElement.add("queueNode", String(queuePath + "/[0]"));
-      Firebase.updateNodeSilent(fbdo, queuePath.c_str(), removeQueueElement);
-    }
-    else
-    {
-      bool success = false;
-      for (int i = 0; i < 5; i++)
-      {
-        irsend.sendNEC(strtol(action.c_str(), NULL, 16));
-        delay(150);
-
-        if (irrecv.decode(&results) && results.value == strtol(action.c_str(), NULL, 16))
-        {
-          success = true;
-          break;
-        }
-      }
-      if (!success)
-      {
-        FirebaseJson removeQueueElement;
-        removeQueueElement.add("queueNode", String(queuePath + "/[0]"));
-        Firebase.updateNodeSilent(fbdo, queuePath.c_str(), removeQueueElement);
-        Serial.println("Failed to perform action after retries, element removed from the queue: " + action);
-      }
-    }
-    irrecv.resume();
-  }
-}
 void serveAirCondition()
 {
   if (Firebase.getJSON(fbdo, queuePath.c_str()))
@@ -408,12 +383,41 @@ void serveAirCondition()
     size_t queueSize = json.iteratorBegin();
     if (queueSize > 0)
     {
-      json.get(jsonData, "[0]/action");
-      String action = jsonData.stringValue;
+      String firstElementKey = "";
+      int elementType;
+      String elementValue;
 
-      sendAction(action);
+      for (size_t i = 0; i < queueSize; i++)
+      {
+        json.iteratorGet(i, elementType, firstElementKey, elementValue);
+        break;
+      }
+      json.iteratorEnd();
+
+      if (json.get(jsonData, firstElementKey + "/action"))
+      {
+        String action = jsonData.stringValue;
+        sendAction(action);
+
+        if (Firebase.deleteNode(fbdo, queuePath + "/" + firstElementKey))
+        {
+          Serial.println("Queue element removed successfully");
+        }
+        else
+        {
+          Serial.println("Failed to remove queue element: " + fbdo.errorReason());
+        }
+      }
+      else
+      {
+        Serial.println("Failed to get action from the first queue element");
+      }
     }
-    json.iteratorEnd();
+    else
+    {
+      json.iteratorEnd();
+      Serial.println("Queue is empty");
+    }
   }
   else
   {
@@ -425,12 +429,6 @@ void setup()
 {
   Serial.begin(115200);
   dht.begin();
-  Wire.begin();
-  if (!lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE))
-  {
-    Serial.println("Error initializing BH1750");
-  }
-
   irsend.begin();
   irrecv.enableIRIn();
 
@@ -448,7 +446,6 @@ void setup()
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
-  pinMode(airConditionPin, OUTPUT);
   pinMode(fanPin, OUTPUT);
   pinMode(lampPin, OUTPUT);
   pinMode(humidityMisterPin, OUTPUT);
@@ -469,12 +466,12 @@ void setup()
 
 void loop()
 {
-  float temperature, humidity, lux;
+  float temperature, humidity;
   int mqValue;
 
-  float avgTemperature, avgHumidity, avgLight, avgMqValue;
+  float avgTemperature, avgHumidity, avgMqValue;
 
-  readSensors(temperature, humidity, lux, mqValue);
+  readSensors(temperature, humidity, mqValue);
 
   getActuatorStates();
 
@@ -486,10 +483,9 @@ void loop()
 
   updateStage();
 
-  calculateAverages(avgTemperature, avgHumidity, avgLight, avgMqValue);
+  calculateAverages(avgTemperature, avgHumidity, avgMqValue);
 
-  controlActuators(avgTemperature, avgHumidity, avgLight, avgMqValue);
+  controlActuators(avgTemperature, avgHumidity, avgMqValue);
 
   serveAirCondition();
-  testIR();
 }
